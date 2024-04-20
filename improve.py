@@ -3,6 +3,7 @@ import math
 from itertools import chain, repeat
 import string
 from collections import defaultdict
+from profile import Profile
 
 import text_gen
 
@@ -101,10 +102,10 @@ class Frame:
             ]
         ):
             if row >= self.HEIGHT:
-                dbg('frame exit early')
+                # dbg('frame exit early')
                 break
             if row == self.HEIGHT-1 and col == self.WIDTH - 1: # funny last spot case
-                dbg('frame exit early')
+                # dbg('frame exit early')
                 break
             if c == '\n':
                 row += 1
@@ -136,14 +137,23 @@ class GameState:
         self.tgt_str = ''
         self.num_fails = [0]*len(self.tgt_str)
         self.actually_typed = ''
-        self.generator = text_gen.test_version()
-        self.generator.find_good_subset()
+        # self.generator = text_gen.test_version()
 
         self.total_correct = 0
         self.total_seen = 0
 
-        self.letter_correct = defaultdict(lambda: 0)
-        self.letter_seen = defaultdict(lambda: 0)
+        try:
+            self.profile = Profile('default.json')
+        except FileNotFoundError:
+            print('creating new profile')
+            self.profile = Profile()
+
+
+        self.generator = text_gen.create_from_profile(self.profile)
+        self.generator.find_good_subset(100, 100)
+
+        # self.letter_correct = defaultdict(lambda: 0)
+        # self.letter_seen = defaultdict(lambda: 0)
 
         self.init_next()
 
@@ -169,9 +179,17 @@ class GameState:
         self.total_seen += len(self.num_fails)
 
         for c, num_fails in zip(self.tgt_str, self.num_fails):
-            if not num_fails:
-                self.letter_correct[c.lower()] += 1
-            self.letter_seen[c.lower()] += 1
+            # if not num_fails:
+            #     self.letter_correct[c.lower()] += 1
+            # self.letter_seen[c.lower()] += 1
+            if c == ' ':
+                continue
+            if num_fails:
+                self.profile.report_miss(c)
+            else:
+                self.profile.report_hit(c)
+
+
 
     def handle_key(self, c):
         done = self._handle_key_inner(c)
@@ -181,7 +199,7 @@ class GameState:
 
 
     def _handle_key_inner(self, c):
-        dbg('handle key: ', c)
+        # dbg('handle key: ', c)
         if len(self.actually_typed) >= len(self.tgt_str):
             return self.actually_typed == self.tgt_str
         if self.tgt_str[self.pos] != c:
@@ -193,6 +211,8 @@ class GameState:
         if self.actually_typed:
             self.actually_typed = self.actually_typed[:-1]
 
+    def shutdown(self):
+        self.profile.store('default.json')
 
 class GameInterface:
     def __init__(self):
@@ -244,7 +264,7 @@ class GameInterface:
 
 
     def render_side_area(self, gamestate):
-        dbg('render side area')
+        # dbg('render side area')
         entry_len = len('q: 100%   ')
         ncols = self.side_area.WIDTH // entry_len
 
@@ -254,27 +274,38 @@ class GameInterface:
         ncols = 3
         nrows = math.ceil(len(chars) / ncols)
         s = ''
-        for i in range(len(chars)):
+        # for i in range(len(chars)):
+        #     col = i % ncols
+        #     row = i // ncols
+        #     j = row + col*nrows
+        #     c = chars[j]
+        for i in range(ncols*nrows):
             col = i % ncols
             row = i // ncols
             j = row + col*nrows
-            c = chars[j]
+            if j < len(chars):
+                c = chars[j]
 
-            n_correct = gamestate.letter_correct[c]
-            n_seen = gamestate.letter_seen[c]
+                # n_correct = gamestate.letter_correct[c]
+                # n_seen = gamestate.letter_seen[c]
 
-            acc = '?%'
-            if n_seen:
-                acc = 100.0 * n_correct / n_seen
-                acc  = f'{acc:.0f}%'
+                n_correct = gamestate.profile.times_correct(c)
+                n_seen = gamestate.profile.times_seen(c)
 
-            s += f'{c}: {acc:4s}'
+
+
+                acc = '?%'
+                if n_seen:
+                    acc = 100.0 * n_correct / n_seen
+                    acc  = f'{acc:.0f}%'
+
+                s += f'{c}: {acc:4s}'
             if col == ncols-1 and row != nrows -1:
                 s+= '\n'
             elif col != ncols -1:
                 s += '  '
 
-        dbg(s)
+        # dbg(s)
 
         self.side_area.clear()
         self.side_area.addstr(s)
@@ -305,9 +336,12 @@ class Game:
 
 
 
-    def setup(self):
+    def run(self):
         self.interface.setup(self.scr)
-        self.loop()
+        try:
+            self.loop()
+        except KeyboardInterrupt:
+            pass
 
 
 
@@ -321,12 +355,13 @@ class Game:
             self.scr.clear()
             self.scr.refresh()
             init_colors()
-            self.setup()
-            self.main_loop()
+            self.run()
         finally:
             curses.endwin()
-
+        print('shutting down')
+        self.state.shutdown()
 
 if __name__ == '__main__':
     game= Game()
+    input('Press Enter to continue.')
     game.start()
